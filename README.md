@@ -62,6 +62,12 @@ Extract `USBboot.zip` so that the `USBboot` folder sits at `D:\USBboot`. The two
 
 ## Hardware
 
+![STM32F103C8T6 pinout](stm32f103c8t6_pinout.png)
+
+*Pinout of the STM32F103C8T6 board, including the pin labels, the onboard LED on PC13, and the jumper block.*
+
+### ST-Link wiring
+
 ### ST-Link wiring
 
 | ST-Link | Board |
