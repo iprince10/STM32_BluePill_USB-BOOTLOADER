@@ -1,59 +1,59 @@
-# Blue Pill New-Project Cheat Sheet (detailed)
+# STM32 Blue Pill USB Bootloader
 
-**STM32F103 · CubeMX + VS Code + CMake · HID bootloader**
+This guide walks through creating a new STM32F103 ("Blue Pill") project from scratch, building it in VS Code, and getting the resulting image onto the board — either over USB through the HID bootloader that lives on the chip, or over ST-Link.
 
----
+The first part explains how the arrangement actually works. Almost every step that looks strange later — the flash offset, the linker sizes, the vector-table check, the reason `--erase-all` is off limits — falls straight out of that explanation, so it is worth reading once before touching CubeMX.
 
-## Contents
+## Fundamentals: how the setup works
 
-1. Prerequisites
-2. Reading the placeholders
-3. Hardware reminders
-4. New project: CubeMX
-5. Open in VS Code
-6. Edits by board
-7. `.vscode/tasks.json`
-8. Build and check
-9. Programming routes
-10. Troubleshooting
-11. Gotchas
-12. Quick reference card
-13. Glossary
+### The chip and its flash
 
----
+An STM32F103 has its program memory in internal flash starting at address `0x08000000`. After reset the CPU fetches its initial stack pointer and reset handler from the very start of that region, so whatever sits at `0x08000000` is what runs first. There is no operating system and no filesystem in between: the hardware simply starts executing at the beginning of flash.
 
-## 1. Prerequisites
+### What a bootloader is
 
-Set up once, assumed present from here on:
+A bootloader is a small program placed at the start of flash that runs before anything else. At reset it decides what to do next: either hand control to the application already stored higher up in flash, or enter a mode where it accepts a new application image and writes it into flash itself.
 
-- VS Code with the **STM32CubeIDE** extension, and **STM32CubeMX**.
-- **STM32CubeProgrammer**, for writing the bootloader or rescuing a board.
-- `D:\USBboot\hid_flash\hid-flash.exe` and `hid_generic_pc13.bin` (low/medium density).
-- The **HID bootloader is installed on the 128 KB board**.
-- Use the ST-Link with serial `56FF6C064…` in CubeProgrammer. The `000000000001` one works only in VS Code.
+This project uses a USB HID bootloader. The advantage is the USB HID class: the host operating system already has a driver for it, so no custom driver, no virtual COM port, and no ST-Link are needed to program the board. The host-side tool sends the raw image over that HID channel and the bootloader writes it. The bootloader only has to be installed once, with ST-Link.
 
----
+### Why the application starts at 0x08000800
 
-## 2. Reading the placeholders
+The bootloader occupies the first 2 KB of flash. To stop the application from being linked on top of it, the application's flash region is redefined to begin at `0x08000800` with a reduced length. The image is then built for that address, and the two never overlap.
 
-Anything in angle brackets is a **blank to fill in with your own value**, not text to type:
+This is also why a full chip erase is dangerous on a board that relies on the bootloader: it removes the bootloader as well as the application, and nothing will answer on USB until the bootloader is written back.
 
-| Placeholder | Meaning | Example |
-| --- | --- | --- |
-| `<project>` | Your project / binary name | `BluePill_USB_Blink` |
-| `<path>` | A real folder path | `C:\Users\Prince Jha\STM32_BluePill` |
+### The vector table and VTOR
 
-PowerShell treats `<` and `>` as special characters, so pasting a placeholder verbatim gives:
+The first bytes of any Cortex-M image are the vector table. Its first two entries are the two values the CPU reads at reset:
 
-```
-Resolve-Path : Illegal characters in path.
-```
+- offset `0x00` — the initial main stack pointer, which should point to the top of RAM
+- offset `0x04` — the address of the reset handler, which in Thumb code always ends in an odd digit
 
-That is not a broken command — it is an unfilled blank. Two fixes: replace the placeholder, or use the auto-detecting versions in section 8, which need no editing at all.
+When the application does not sit at `0x08000000`, the core has to be told where its vector table now lives, otherwise every interrupt and exception continues to be dispatched through the bootloader's table and the program crashes as soon as anything fires. That relocation is done by writing the CPU's vector-table offset register at startup.
 
----
+The same reasoning is why interrupt enabling is moved later in the startup sequence: nothing should be able to raise an interrupt before the vector table has been pointed at the correct place.
 
-## 3. Hardware reminders
+### Why the linker script matters
+
+The linker script describes the memory regions the program is built for, and the initial stack pointer is taken from the top of the RAM region described there. If the described RAM is larger than the RAM that physically exists, the stack starts beyond the end of real memory and the first push to the stack faults. The sizes in the linker script therefore have to match the actual device, not the part number on the packaging.
+
+### `.elf` and `.bin`
+
+The `.elf` is the linked executable: code, data and debug information, used by the debugger. The `.bin` is a flat image with no metadata, meant to be written into flash at a chosen address. The bootloader writes the `.bin`.
+
+### What happens during a USB flash
+
+The board is put into bootloader mode with a jumper and a reset. The bootloader starts instead of the application and presents itself on USB as an HID device. The host tool sends the `.bin`, the bootloader writes it into flash, and after a reset the application runs. Windows sometimes reports the device as having malfunctioned partway through the swap; that is expected during the transition and does not indicate a failed write. The LED is the reliable indicator of state.
+
+## Repository contents
+
+- `README.md` — this document.
+- `hid_flash/` — the Windows host-side tool, `hid-flash.exe`, which talks to the bootloader over USB HID and pushes the image.
+- `stm32_binaries/` — prebuilt bootloader images, including `hid_generic_pc13.bin`, the HID bootloader for low/medium-density STM32F103 parts with the LED on PC13. These are the files written with ST-Link when installing or restoring the bootloader.
+
+The commands below refer to these folders at their local paths, `D:\USBboot\hid_flash` and `D:\USBboot\stm32_binaries`. Adjust the paths if you keep them somewhere else.
+
+## Hardware
 
 ### ST-Link wiring
 
@@ -63,11 +63,17 @@ That is not a broken command — it is an unfilled blank. Two fixes: replace the
 | SWDIO | PA13 |
 | GND | GND |
 | 3V3 | 3V3 |
-| RST | **R** (recommended) |
+| RST | R (recommended) |
 
-- **Onboard LED:** PC13, **active-low** (low = on).
-- **Pins to avoid:** PA13/PA14 (SWD), PB2 (BOOT1), PA11/PA12 (USB, on the bootloader board), PA9/PA10 (UART rescue). Check any new peripheral against this list before assigning it.
-- **Jumpers:** the one **next to the reset button** enters the USB bootloader. The other stays at **0** always. They are read only at reset, so press **reset** after moving one.
+### Pins and the onboard LED
+
+The onboard LED is on PC13 and is active-low, so a low level turns it on.
+
+Pins to avoid when assigning new peripherals: PA13 and PA14 (SWD), PB2 (BOOT1), PA11 and PA12 (USB, on the bootloader board), and PA9 and PA10 (UART rescue).
+
+### Jumper positions
+
+One jumper, the one next to the reset button, selects the USB bootloader. The other stays at 0 at all times. Both are read only at reset, so press reset after moving one.
 
 | Action | Jumper (next to reset) | Other jumper | Connected |
 | --- | --- | --- | --- |
@@ -76,29 +82,46 @@ That is not a broken command — it is an unfilled blank. Two fixes: replace the
 | Debug with ST-Link | 0 | 0 | ST-Link |
 | Rescue via CP2102 | 0 | 1 | CP2102 |
 
----
+## Software prerequisites
 
-## 4. New project: CubeMX
+- VS Code with the STM32CubeIDE extension, and STM32CubeMX.
+- STM32CubeProgrammer, for writing the bootloader or rescuing a board.
+- The files in the `hid_flash` and `stm32_binaries` folders of this repository.
 
-1. STM32Cube panel → **Launch STM32CubeMX** → **Access to MCU Selector**.
-2. MCU: **STM32F103CBTx** for the 128 KB board, **STM32F103C8Tx** for the 32 KB clone.
-3. **RCC → HSE:** Crystal/Ceramic Resonator.
-4. **SYS → Debug:** Serial Wire.
-5. **Clock Configuration:** type **72** into HCLK and press Enter.
-6. Set your pins (PC13 as GPIO_Output with label `LED`). **Don't enable the USB peripheral.**
-7. **Project Manager:** name and location, toolchain **CMake**, then **Generate Code**.
+## Reading the placeholders
 
----
+Anything in angle brackets is a blank to fill in with your own value, not text to type:
 
-## 5. Open in VS Code
+| Placeholder | Meaning | Example |
+| --- | --- | --- |
+| `<project>` | The project or binary name | `BluePill_USB_Blink` |
+| `<path>` | A real folder path | `C:\Users\Prince Jha\STM32_BluePill` |
 
-**File → Open Folder** → accept *Configure as STM32Cube project* (or **STM32Cube panel → Setup STM32Cube project(s)**) → device → **Configure** → preset **Debug**.
+PowerShell treats `<` and `>` as special characters, so pasting a placeholder verbatim gives:
 
----
+```
+Resolve-Path : Illegal characters in path.
+```
 
-## 6. Edits by board
+That is not a broken command, it is an unfilled blank. Either replace the placeholder, or use the auto-detecting version of the command given under "Building and verifying the image", which needs no editing at all.
 
-### 32 KB clone (plain ST-Link)
+## Creating a new project in CubeMX
+
+1. STM32Cube panel → Launch STM32CubeMX → Access to MCU Selector.
+2. MCU: STM32F103CBTx for the 128 KB board, STM32F103C8Tx for the clone.
+3. RCC → HSE: Crystal/Ceramic Resonator.
+4. SYS → Debug: Serial Wire.
+5. Clock Configuration: type 72 into HCLK and press Enter.
+6. Set your pins, for example PC13 as GPIO_Output with the label LED. Do not enable the USB peripheral.
+7. Project Manager: name and location, toolchain CMake, then Generate Code.
+
+## Opening the project in VS Code
+
+File → Open Folder, then accept "Configure as STM32Cube project" (or use the STM32Cube panel → Setup STM32Cube project(s)), choose the device, then Configure with the Debug preset.
+
+## Board-specific edits
+
+### Clone with plain ST-Link
 
 In the `_FLASH.ld` file, set the real sizes (`FLASH` 32K, `RAM` 6K). Otherwise the stack points outside real RAM and you get a HardFault right at start.
 
@@ -131,9 +154,7 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     COMMENT "Creating .bin")
 ```
 
----
-
-## 7. `.vscode/tasks.json`
+## VS Code tasks
 
 Create the folder `.vscode` in the project root and add `tasks.json` with the contents below. The file name comes from `${workspaceFolderBasename}`, so it fills itself in and nothing needs typing.
 
@@ -184,16 +205,9 @@ Create the folder `.vscode` in the project root and add `tasks.json` with the co
 }
 ```
 
-Notes:
+Build is the default build task, so Ctrl+Shift+B runs it. Flash over USB builds first and then invokes the tool with the dummy `COM99` argument this version of it requires; the board must already be in bootloader mode. Check vector table is the sanity check described below, wired in as a task so it needs no editing. If the binary or build folder is named differently, adjust the paths in the `args` arrays only.
 
-- **Build** is the default build task, so `Ctrl+Shift+B` runs it.
-- **Flash over USB** builds first, then invokes `hid-flash.exe` with the dummy `COM99` this version requires. Put the board in bootloader mode (jumper next to reset = 1, press reset) before running it.
-- **Check vector table** is the sanity check from section 8, wired in as a task so it needs no editing.
-- If your binary or build folder is named differently, adjust the paths in the `args` arrays only.
-
----
-
-## 8. Build and check (bootloader board)
+## Building and verifying the image
 
 Build, then in the terminal:
 
@@ -208,9 +222,7 @@ With the placeholder filled in, that becomes:
 $b = [System.IO.File]::ReadAllBytes((Resolve-Path build\Debug\BluePill_USB_Blink.bin).Path)
 ```
 
-### Version that needs no editing
-
-This one picks up whichever `.bin` is in `build\Debug`, so it works in any project:
+Version that needs no editing. This one picks up whichever `.bin` is in `build\Debug`, so it works in any project:
 
 ```powershell
 $f = (Get-ChildItem build\Debug\*.bin | Select-Object -First 1).FullName
@@ -220,27 +232,23 @@ $b = [System.IO.File]::ReadAllBytes($f)
 
 Run it from the project folder. Expect the first value to be `20005000` and the second something like `0800xxxx`, at least `08000800`, ending in an odd digit.
 
-### Reading the output
-
-The check reads the first two 32-bit words of the image, which are the first two entries of the ARM vector table:
+The check reads the first two 32-bit words of the image, which are the first two entries of the vector table:
 
 | Word | Offset | Meaning | Expected |
 | --- | --- | --- | --- |
 | 1 | 0x00 | Initial main stack pointer | `20005000` |
-| 2 | 0x04 | Reset handler address | `0800xxxx`, ≥ `08000800`, odd |
+| 2 | 0x04 | Reset handler address | `0800xxxx`, at least `08000800`, odd |
 
----
+## Flashing
 
-## 9. Programming routes
+### Over ST-Link, for debugging
 
-### ST-Link (debug)
+Jumpers 0/0, wire the ST-Link, press F5. Never add `--erase-all` on the bootloader board.
 
-Jumpers 0/0, wire the ST-Link, press `F5`. **Never add** `--erase-all` **on the bootloader board.**
+### Over USB, without an ST-Link
 
-### USB (no ST-Link)
-
-1. Move the jumper next to reset to **1**, then press **reset**. The LED blinks fast.
-2. Run the **Flash over USB** task, or run the command manually:
+1. Move the jumper next to reset to 1, then press reset. The LED blinks fast.
+2. Run the Flash over USB task, or run the command manually:
 
 ```powershell
 & "D:\USBboot\hid_flash\hid-flash.exe" "C:\Users\Prince Jha\STM32_BluePill\BluePill_USB_Blink\build\Debug\BluePill_USB_Blink.bin" COM99
@@ -248,62 +256,33 @@ Jumpers 0/0, wire the ST-Link, press `F5`. **Never add** `--erase-all` **on the 
 
 The `COM99` is a dummy that this version needs. The VS Code task uses `${workspaceFolderBasename}` for the file name, so it fills itself in and you don't type anything.
 
-3. Move the jumper back to **0** and press **reset**.
+3. Move the jumper back to 0 and press reset.
 
-### CP2102 rescue
+### Rescue over CP2102
 
-CP2102 TXD to PA10, RXD to PA9, GND, 5V. BOOT0 = 1, press reset. In CubeProgrammer switch to **UART** (Even parity, 115200). Set BOOT0 back to 0 afterward.
+CP2102 TXD to PA10, RXD to PA9, GND, 5V. BOOT0 = 1, press reset. In CubeProgrammer switch to UART (Even parity, 115200). Set BOOT0 back to 0 afterward.
 
-### Reinstall the bootloader
+### Reinstalling the bootloader
 
-With the `56FF…` ST-Link, run **Full chip erase**, then write `hid_generic_pc13.bin` at `0x08000000` with **Verify programming**.
+With a working ST-Link, run Full chip erase, then write `hid_generic_pc13.bin` from the `stm32_binaries` folder at `0x08000000` with Verify programming.
 
----
-
-## 10. Troubleshooting
+## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `Illegal characters in path` | Unfilled `<placeholder>` | Replace it, or use the auto-detecting command |
-| `Cannot find path … because it does not exist` | Wrong file name or build not run | Check `build\Debug\*.bin` exists; build first |
-| HardFault immediately at start | `.ld` sizes don't match real silicon | Correct FLASH/RAM sizes for the board |
-| Nothing runs after USB flash | VTOR not relocated, or jumper left at 1 | Set `SCB->VTOR`, jumpers back to 0/0, reset |
-| Vector table check shows `08000000` | Image linked for the wrong flash origin | `FLASH ORIGIN = 0x08000800` for bootloader board |
-| Second word ends in an even digit | Not a valid Thumb address / bad image | Rebuild; something corrupted the entry point |
-| Upload appears to "malfunction" in Windows | Expected after HID flash | Harmless — confirm via the LED pattern |
-| Board unresponsive after a bad flash | App overwrote the bootloader | Reinstall bootloader, or use CP2102 rescue |
+| `Cannot find path ... because it does not exist` | Wrong file name, or the build was not run | Check `build\Debug\*.bin` exists; build first |
+| HardFault immediately at start | Linker sizes don't match real silicon | Correct the FLASH and RAM sizes for the board |
+| Nothing runs after a USB flash | Vector table not relocated, or jumper left at 1 | Set the vector table offset, jumpers back to 0/0, reset |
+| Vector table check shows `08000000` | Image linked for the wrong flash origin | Use `0x08000800` as the flash origin on the bootloader board |
+| Second word ends in an even digit | Not a valid Thumb address, or a damaged image | Rebuild; something corrupted the entry point |
+| Upload reports the device as malfunctioning | Expected during the USB mode swap | Harmless; confirm state from the LED pattern |
+| Board unresponsive after a bad flash | The application overwrote or replaced the bootloader | Reinstall the bootloader, or use the CP2102 rescue |
 
----
-
-## 11. Gotchas
+## Notes
 
 - After CubeMX regenerates code, re-check the `.ld` file. Keep your own code inside the `USER CODE` markers.
-- "Malfunctioned" in Windows after an upload is harmless. The LED tells you the state: fast blink is the bootloader, your own pattern is the app.
-- Check any new peripheral pins against the avoid list.
-- Copy a working project folder as a template and just rename it.
-
----
-
-## 12. Quick reference card
-
-```text
-Open project       File > Open Folder, preset Debug
-Build              Ctrl+Shift+B
-Flash over USB     1) jumper next-to-reset = 1, press reset  2) run task  3) jumper = 0, reset
-Sanity check       expect 20005000 + 0800xxxx (odd last digit)
-Rescue via UART    BOOT0 = 1, UART Even/115200 in CubeProgrammer, then BOOT0 = 0
-Never              --erase-all on the bootloader board
-```
-
----
-
-## 13. Glossary
-
-- **HID bootloader** — A small program that lives at the bottom of flash and talks the USB HID protocol, so a PC can push a new application image over plain USB without an ST-Link.
-- **Flash offset 0x08000800** — The bootloader reserves the first 2 KB, so the application must be linked to start 2 KB higher.
-- **Vector table** — The array at the start of the image: entry 0 is the initial stack pointer, entry 1 is the reset handler. Its two first words are what the sanity check reads.
-- **VTOR** — The CPU register telling the core where the vector table lives. When the application is not at `0x08000000`, the startup code must point VTOR at the application's own table.
-- **`.bin` vs `.elf`** — `.elf` carries debug and symbol info for the debugger; `.bin` is the raw image the bootloader writes.
-- **Linker script (`_FLASH.ld`)** — Tells the linker which memory regions exist and where code and data go; if it disagrees with real hardware, the stack ends up outside RAM.
-- **Thumb bit** — The lowest bit of an address on Cortex-M is always 1 for code; a reset handler address that ends in an even digit is a red flag.
-- **POST_BUILD** — A custom build step that produces something extra (`objcopy` to `.bin`) after the linked `.elf` is ready.
+- The LED tells you which program is running: a fast blink is the bootloader, your own pattern is the application.
+- Check any new peripheral pin against the list of pins to avoid.
+- When more than one ST-Link is attached, pick the right one by serial number in CubeProgrammer.
+- A working project folder can be copied and renamed to serve as a template for the next one.
