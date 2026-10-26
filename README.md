@@ -118,6 +118,27 @@ Resolve-Path : Illegal characters in path.
 
 That is not a broken command, it is an unfilled blank. Either replace the placeholder, or use the auto-detecting version of the command given under "Building and verifying the image", which needs no editing at all.
 
+## Installing the bootloader
+
+This is the first thing to do to a new board, and the one operation that needs an ST-Link. Everything after it can be done over USB. Repeat it whenever the bootloader has been erased, or whenever the board stops answering on USB.
+
+Before starting: jumpers 0/0, ST-Link wired as in the table above, board connected and powered.
+
+1. Open STM32CubeProgrammer.
+2. In the interface dropdown at the top right, select ST-LINK and press Connect.
+3. If more than one probe is attached, open the ST-Link configuration first and select the correct one by serial number.
+4. Switch to the Erasing & Programming view.
+5. Press Full chip erase and confirm. This wipes the entire flash, so both the bootloader and any application are removed.
+6. Still in that view, set the file path to the bootloader image: `D:\USBboot\stm32_binaries\hid_generic_pc13.bin`.
+7. Set the start address to `0x08000000`.
+8. Tick Verify programming. Ticking Run after programming is optional.
+9. Press Start programming and wait for it to report success.
+10. Press reset on the board. The LED should now blink fast, which is the bootloader waiting for an image over USB. That confirms it is installed and working.
+
+Two cautions. A full chip erase removes the application as well as the bootloader, so do not reach for it just to update an application; the USB route replaces the application without touching the bootloader. And when debugging over ST-Link on a board that relies on the bootloader, never use an erase-all option, for the same reason: it takes the bootloader with it.
+
+Button labels differ slightly between versions of CubeProgrammer. The sequence is always the same: connect over ST-Link, full chip erase, then write the image at `0x08000000` with verification enabled.
+
 ## Creating a new project in CubeMX
 
 1. STM32Cube panel → Launch STM32CubeMX → Access to MCU Selector.
