@@ -47,11 +47,18 @@ The board is put into bootloader mode with a jumper and a reset. The bootloader 
 
 ## Repository contents
 
-- `README.md` — this document.
-- `hid_flash/` — the Windows host-side tool, `hid-flash.exe`, which talks to the bootloader over USB HID and pushes the image.
-- `stm32_binaries/` — prebuilt bootloader images, including `hid_generic_pc13.bin`, the HID bootloader for low/medium-density STM32F103 parts with the LED on PC13. These are the files written with ST-Link when installing or restoring the bootloader.
+[Download USBboot.zip](https://github.com/iprince10/STM32_BluePill_USB-BOOTLOADER/raw/main/USBboot.zip)
 
-The commands below refer to these folders at their local paths, `D:\USBboot\hid_flash` and `D:\USBboot\stm32_binaries`. Adjust the paths if you keep them somewhere else.
+| Item | What it is | Path after extraction |
+| --- | --- | --- |
+| `USBboot.zip` | The complete Windows-side toolkit in one download: the host tool and the prebuilt bootloader images. | — |
+| `USBboot/hid_flash/` | The host-side tool, `hid-flash.exe`, which talks to the bootloader over USB HID and pushes the image into flash. | `D:\USBboot\hid_flash` |
+| `USBboot/stm32_binaries/` | Prebuilt bootloader images, including `hid_generic_pc13.bin`. | `D:\USBboot\stm32_binaries` |
+| `README.md` | This document. | — |
+
+Extract `USBboot.zip` so that the `USBboot` folder sits at `D:\USBboot`. The two folders inside it then land at `D:\USBboot\hid_flash` and `D:\USBboot\stm32_binaries`, which is the location every command in this guide expects, so nothing needs editing. If you keep them elsewhere, adjust the paths accordingly.
+
+`hid_generic_pc13.bin` is the HID bootloader for low/medium-density STM32F103 parts, with the LED on PC13. It is the file written with ST-Link when installing or restoring the bootloader.
 
 ## Hardware
 
@@ -86,7 +93,7 @@ One jumper, the one next to the reset button, selects the USB bootloader. The ot
 
 - VS Code with the STM32CubeIDE extension, and STM32CubeMX.
 - STM32CubeProgrammer, for writing the bootloader or rescuing a board.
-- The files in the `hid_flash` and `stm32_binaries` folders of this repository.
+- `USBboot.zip` from this repository, extracted to `D:\USBboot` (see Repository contents).
 
 ## Reading the placeholders
 
