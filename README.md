@@ -62,7 +62,19 @@ Extract `USBboot.zip` so that the `USBboot` folder sits at `D:\USBboot`. The two
 
 ## Hardware
 
-![STM32F103C8T6 pinout](stm32f103c8t6_pinout.png)
+<table>
+  <tr>
+    <td align="centre">
+      <img src="STM32_BluePill_Pinout.jpeg" height= "800" width="500" alt="STM32 Blue Pill Pinout">
+    </td>
+    <td align="centre">
+      <img src="stm32f103c8t6_pinout.png" height="800" width="800" alt="STM32F103C8T6 Pinout">
+    </td>
+  </tr>
+</table>
+
+<!--![STM32F103C8T6 pinout](stm32f103c8t6_pinout.png)
+![STM32F103C8T6 pinout](STM32_BluePill_Pinout.jpeg)-->
 
 *Pinout of the STM32F103C8T6 board, including the pin labels, the onboard LED on PC13, and the jumper block.*
 
